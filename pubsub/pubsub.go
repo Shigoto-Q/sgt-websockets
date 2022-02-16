@@ -7,6 +7,7 @@ import (
 	"github.com/gomodule/redigo/redis"
 	"github.com/gorilla/websocket"
 	"log"
+	"sync"
 )
 
 const (
@@ -36,11 +37,11 @@ type Subscription struct {
 	Topic  string
 	Client *Client
 	UserId string
+	sync.Mutex
 }
 
 func (ps *PubSub) AddClient(client Client) *PubSub {
 	ps.Clients = append(ps.Clients, client)
-
 	return ps
 }
 
@@ -78,29 +79,26 @@ func (ps *PubSub) GetSubscriptions(topic string, client *Client) []Subscription 
 func (ps *PubSub) Subscribe(client *Client, topic string, gPubSubConn *redis.PubSubConn, token string) *PubSub {
 	clientSubs := ps.GetSubscriptions(topic, client)
 	if len(clientSubs) > 0 {
-
-		// client is subscribed this topic before
-
 		return ps
 	}
 	userId := utils.GetUser(token)
-
 	newSubscription := Subscription{
 		Topic:  topic,
 		Client: client,
 		UserId: userId,
 	}
-	ps.Subscriptions = append(ps.Subscriptions, newSubscription)
 	if err := gPubSubConn.Subscribe(topic); err != nil {
 		log.Panic(err)
 	}
+	newSubscription.Lock()
+	ps.Subscriptions = append(ps.Subscriptions, newSubscription)
+	defer newSubscription.Unlock()
 	return ps
 }
 
 func (ps *PubSub) Publish(topic string, message []byte, excludeClient *Client) {
 	subscriptions := ps.GetSubscriptions(topic, nil)
 	for _, sub := range subscriptions {
-		fmt.Printf("Sending to client id %s message is %s \n", sub.Client.Id, message)
 		err := sub.Client.Send(message)
 		if err != nil {
 			log.Panic(err)
@@ -127,17 +125,13 @@ func (ps *PubSub) Unsubscribe(client *Client, topic string) *PubSub {
 }
 
 func (ps *PubSub) HandleReceiveMessage(client Client, messageType int, payload []byte, gPubSubConn *redis.PubSubConn) *PubSub {
-
 	m := Message{}
-
 	err := json.Unmarshal(payload, &m)
 	if err != nil {
 		fmt.Println("This is not correct message payload")
 		return ps
 	}
-
 	switch m.Action {
-
 	case PUBLISH:
 		ps.Publish(m.Topic, m.Message, nil)
 	case SUBSCRIBE:

@@ -4,19 +4,33 @@ import (
 	"awesomeProject1/pubsub"
 	"awesomeProject1/types"
 	"encoding/json"
-	"fmt"
 	"github.com/gomodule/redigo/redis"
 	"github.com/gorilla/websocket"
 	"github.com/satori/go.uuid"
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 )
+
+var redisPool *redis.Pool
+var taskResult types.TaskResult
+var taskCount types.TaskCountMessage
 
 var (
 	gPubSubConn *redis.PubSubConn
-	gRedisConn  = func() (redis.Conn, error) {
-		return redis.Dial("tcp", "redis:6379")
+	gRedisConn  = func() (redis.Pool, error) {
+		return redis.Pool{
+			MaxIdle:     3,
+			IdleTimeout: 240 * time.Second,
+			Dial: func() (redis.Conn, error) {
+				c, err := redis.Dial("tcp", "redis:6379")
+				if err != nil {
+					return nil, err
+				}
+				return c, err
+			},
+		}, nil
 	}
 )
 
@@ -33,11 +47,6 @@ func autoId() string {
 var ps = &pubsub.PubSub{}
 
 func websocketHandler(w http.ResponseWriter, r *http.Request) {
-	gRedisConn, err := gRedisConn()
-	if err != nil {
-		log.Panic(err)
-	}
-	gPubSubConn = &redis.PubSubConn{Conn: gRedisConn}
 	upgrader.CheckOrigin = func(r *http.Request) bool {
 		return true
 
@@ -47,7 +56,6 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 		log.Println(err)
 		return
 	}
-
 	client := pubsub.Client{
 		Id:         autoId(),
 		Connection: conn,
@@ -55,26 +63,20 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 
 	// add this client into the list
 	ps.AddClient(client)
-
-	fmt.Println("New Client is connected, total: ", len(ps.Clients))
+	log.Println("New Client is connected, total: ", len(ps.Clients))
 
 	for {
 		messageType, p, err := conn.ReadMessage()
 		if err != nil {
 			log.Println("Something went wrong", err)
-
 			ps.RemoveClient(client)
 			log.Println("total clients and subscriptions ", len(ps.Clients), len(ps.Subscriptions))
-
 			return
 		}
 		go listenToMessages()
-		ps.HandleReceiveMessage(client, messageType, p, gPubSubConn)
+		go ps.HandleReceiveMessage(client, messageType, p, gPubSubConn)
 	}
 }
-
-var taskResult types.TaskResult
-var taskCount types.TaskCountMessage
 
 func sendTaskResultMessage(data []byte, sub pubsub.Subscription) {
 	err := json.Unmarshal([]byte(data), &taskResult)
@@ -82,7 +84,6 @@ func sendTaskResultMessage(data []byte, sub pubsub.Subscription) {
 		log.Panic(err)
 	}
 	if sub.UserId == strconv.FormatInt(int64(taskResult.User_id), 10) {
-		fmt.Printf("Sending to client id %s message is %s \n", sub.Client.Id, data)
 		err = sub.Client.Send([]byte(data))
 		if err != nil {
 			log.Println(err)
@@ -96,7 +97,6 @@ func sendTaskCountMessage(data []byte, sub pubsub.Subscription) {
 		log.Panic(err)
 	}
 	if sub.UserId == strconv.FormatInt(int64(taskCount.UserId), 10) {
-		fmt.Printf("Sending to client id %s message is %s \n", sub.Client.Id, data)
 		err = sub.Client.Send(data)
 		if err != nil {
 			log.Println(err)
@@ -108,12 +108,13 @@ func listenToMessages() {
 	for {
 		switch v := gPubSubConn.Receive().(type) {
 		case redis.Message:
+			log.Printf("Received message from %s", v.Channel)
 			subscriptions := ps.GetSubscriptions(v.Channel, nil)
 			for _, sub := range subscriptions {
 				if v.Channel == types.TaskResults {
-					sendTaskResultMessage(v.Data, sub)
+					go sendTaskResultMessage(v.Data, sub)
 				} else if v.Channel == types.TaskCount {
-					sendTaskCountMessage(v.Data, sub)
+					go sendTaskCountMessage(v.Data, sub)
 				}
 			}
 		case redis.Subscription:
@@ -126,18 +127,20 @@ func listenToMessages() {
 }
 
 func main() {
-	fmt.Println("Server is running: http://localhost:8080")
+	gRedisConn, err := gRedisConn()
+	if err != nil {
+		log.Panic(err)
+	}
+	gPubSubConn = &redis.PubSubConn{Conn: gRedisConn.Get()}
+	log.Println("Server is running: http://localhost:8080")
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 
 		http.ServeFile(w, r, "static")
 
 	})
-
 	http.HandleFunc("/ws", websocketHandler)
-
-	err := http.ListenAndServe(":8080", nil)
+	err = http.ListenAndServe(":8080", nil)
 	if err != nil {
 		return
 	}
-
 }
