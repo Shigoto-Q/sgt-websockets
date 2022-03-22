@@ -1,8 +1,8 @@
 package main
 
 import (
-	"awesomeProject1/pubsub"
-	"awesomeProject1/types"
+	"github.com/Shigoto-Q/sgt-websockets/pubsub"
+	"github.com/Shigoto-Q/sgt-websockets/types"
 	"encoding/json"
 	"github.com/gomodule/redigo/redis"
 	"github.com/gorilla/websocket"
@@ -103,6 +103,7 @@ func sendTaskCountMessage(data []byte, sub pubsub.Subscription) {
 		}
 	}
 }
+
 
 func listenToMessages() {
 	for {

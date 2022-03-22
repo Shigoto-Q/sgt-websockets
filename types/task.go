@@ -25,3 +25,10 @@ const (
 	TaskCount   string = "task_count"
 	TaskResults string = "task_results"
 )
+
+
+type DockerImage struct {
+  Repository string `json:"Repository"`
+  Name string `json:"Name"`
+  ImageName string `json:"ImageName"`
+}

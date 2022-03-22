@@ -1,9 +1,12 @@
 package pubsub
 
 import (
-	"awesomeProject1/utils"
+	"github.com/Shigoto-Q/sgt-websockets/utils"
 	"encoding/json"
+    "bytes"
+    "net/http"
 	"fmt"
+    "io"
 	"github.com/gomodule/redigo/redis"
 	"github.com/gorilla/websocket"
 	"log"
@@ -14,6 +17,7 @@ const (
 	PUBLISH     = "publish"
 	SUBSCRIBE   = "subscribe"
 	UNSUBSCRIBE = "unsubscribe"
+    CREATE_IMAGE = "create-image"
 )
 
 type PubSub struct {
@@ -26,12 +30,27 @@ type Client struct {
 	Connection *websocket.Conn
 }
 
+
+type TestMessage struct {
+  Name string `json:"name"`
+}
+
+
 type Message struct {
 	Action  string          `json:"action"`
 	Topic   string          `json:"topic"`
-	Message json.RawMessage `json:"message"`
+	Data json.RawMessage `json:"data"`
 	Token   string          `json:"token"`
 }
+
+
+type Image struct {
+  Repository string `json:"Repository"`
+  Name string `json:"Name"`
+  ImageName string `json:"ImageName"`
+  Command string `json:"Command"`
+}
+
 
 type Subscription struct {
 	Topic  string
@@ -124,6 +143,28 @@ func (ps *PubSub) Unsubscribe(client *Client, topic string) *PubSub {
 
 }
 
+var url = "http://django:8000/api/v1/docker/images/create/"
+
+func CreateTask(image *Image, token string) []byte {
+  client := &http.Client{}
+  payloadBuffer := new(bytes.Buffer)
+  json.NewEncoder(payloadBuffer).Encode(image)
+  req, err := http.NewRequest("POST", url, payloadBuffer)
+  if err != nil {
+    log.Fatal(err)
+  }
+  req.Header.Add("Authorization", token)
+  resp, err := client.Do(req)
+  if err != nil {
+    log.Fatal(err)
+  }
+  bodyBytes, err := io.ReadAll(resp.Body)
+  if err != nil {
+    log.Fatal(err)
+  }
+  return bodyBytes
+}
+
 func (ps *PubSub) HandleReceiveMessage(client Client, messageType int, payload []byte, gPubSubConn *redis.PubSubConn) *PubSub {
 	m := Message{}
 	err := json.Unmarshal(payload, &m)
@@ -133,11 +174,21 @@ func (ps *PubSub) HandleReceiveMessage(client Client, messageType int, payload [
 	}
 	switch m.Action {
 	case PUBLISH:
-		ps.Publish(m.Topic, m.Message, nil)
+		ps.Publish(m.Topic, m.Data, nil)
 	case SUBSCRIBE:
 		ps.Subscribe(&client, m.Topic, gPubSubConn, m.Token)
 	case UNSUBSCRIBE:
 		fmt.Println("Client want to unsubscribe the topic", m.Topic, client.Id)
+    case CREATE_IMAGE:
+      var image Image
+      err = json.Unmarshal(m.Data, &image)
+      if err != nil {
+        panic(err)
+      }
+      resp := CreateTask(&image, m.Token)
+      // TODO Handle creating and pushing images
+      client.Send(resp)
+	  fmt.Println("Client wants to create new docker image", m.Topic, client.Id, image)
 	default:
 		break
 	}
