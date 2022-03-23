@@ -1,16 +1,19 @@
 package pubsub
 
 import (
-	"github.com/Shigoto-Q/sgt-websockets/utils"
 	"encoding/json"
     "bytes"
     "net/http"
 	"fmt"
     "io"
-	"github.com/gomodule/redigo/redis"
-	"github.com/gorilla/websocket"
 	"log"
 	"sync"
+
+	"github.com/Shigoto-Q/sgt-websockets/git"
+	"github.com/Shigoto-Q/sgt-websockets/utils"
+
+	"github.com/gomodule/redigo/redis"
+	"github.com/gorilla/websocket"
 )
 
 const (
@@ -165,6 +168,15 @@ func CreateTask(image *Image, token string) []byte {
   return bodyBytes
 }
 
+
+func handleCreateImage(client *Client, image *Image, m *Message) {
+  resp := CreateTask(image, m.Token)
+  client.Send(resp)
+  path := git.CloneRepo(image.Repository, image.ImageName)
+  ctx := git.GetContext(path)
+  log.Println(ctx)
+}
+
 func (ps *PubSub) HandleReceiveMessage(client Client, messageType int, payload []byte, gPubSubConn *redis.PubSubConn) *PubSub {
 	m := Message{}
 	err := json.Unmarshal(payload, &m)
@@ -182,13 +194,13 @@ func (ps *PubSub) HandleReceiveMessage(client Client, messageType int, payload [
     case CREATE_IMAGE:
       var image Image
       err = json.Unmarshal(m.Data, &image)
+	  fmt.Println("Client wants to create new docker image", m.Topic, client.Id, image)
       if err != nil {
         panic(err)
       }
-      resp := CreateTask(&image, m.Token)
+
       // TODO Handle creating and pushing images
-      client.Send(resp)
-	  fmt.Println("Client wants to create new docker image", m.Topic, client.Id, image)
+      handleCreateImage(&client, &image, &m)
 	default:
 		break
 	}
