@@ -1,16 +1,18 @@
 package main
 
 import (
-	"github.com/Shigoto-Q/sgt-websockets/pubsub"
-	"github.com/Shigoto-Q/sgt-websockets/types"
-	"encoding/json"
-	"github.com/gomodule/redigo/redis"
-	"github.com/gorilla/websocket"
-	"github.com/satori/go.uuid"
 	"log"
 	"net/http"
 	"strconv"
 	"time"
+	"encoding/json"
+
+	"github.com/Shigoto-Q/sgt-websockets/pubsub"
+	"github.com/Shigoto-Q/sgt-websockets/types"
+
+	"github.com/gomodule/redigo/redis"
+	"github.com/gorilla/websocket"
+	"github.com/satori/go.uuid"
 )
 
 var redisPool *redis.Pool

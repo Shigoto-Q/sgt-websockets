@@ -1,14 +1,21 @@
 package pubsub
 
 import (
+	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
-    "bytes"
-    "net/http"
+	"errors"
 	"fmt"
-    "io"
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/client"
+	"io"
 	"log"
+	"net/http"
 	"sync"
+	"time"
 
+	"github.com/Shigoto-Q/sgt-websockets/docker"
 	"github.com/Shigoto-Q/sgt-websockets/git"
 	"github.com/Shigoto-Q/sgt-websockets/utils"
 
@@ -17,10 +24,10 @@ import (
 )
 
 const (
-	PUBLISH     = "publish"
-	SUBSCRIBE   = "subscribe"
-	UNSUBSCRIBE = "unsubscribe"
-    CREATE_IMAGE = "create-image"
+	PUBLISH      = "publish"
+	SUBSCRIBE    = "subscribe"
+	UNSUBSCRIBE  = "unsubscribe"
+	CREATE_IMAGE = "create-image"
 )
 
 type PubSub struct {
@@ -33,33 +40,40 @@ type Client struct {
 	Connection *websocket.Conn
 }
 
-
 type TestMessage struct {
-  Name string `json:"name"`
+	Name string `json:"name"`
 }
-
 
 type Message struct {
-	Action  string          `json:"action"`
-	Topic   string          `json:"topic"`
-	Data json.RawMessage `json:"data"`
-	Token   string          `json:"token"`
+	Action string          `json:"action"`
+	Topic  string          `json:"topic"`
+	Data   json.RawMessage `json:"data"`
+	Token  string          `json:"token"`
 }
-
 
 type Image struct {
-  Repository string `json:"Repository"`
-  Name string `json:"Name"`
-  ImageName string `json:"ImageName"`
-  Command string `json:"Command"`
+	Repository string `json:"Repository"`
+	Name       string `json:"Name"`
+	ImageName  string `json:"ImageName"`
+	Command    string `json:"Command"`
 }
 
+var dockerRegistryID = "shigoto"
 
 type Subscription struct {
 	Topic  string
 	Client *Client
 	UserId string
 	sync.Mutex
+}
+
+type ErrorLine struct {
+	Error       string      `json:"error"`
+	ErrorDetail ErrorDetail `json:"errorDetail"`
+}
+
+type ErrorDetail struct {
+	Message string `json:"message"`
 }
 
 func (ps *PubSub) AddClient(client Client) *PubSub {
@@ -149,32 +163,84 @@ func (ps *PubSub) Unsubscribe(client *Client, topic string) *PubSub {
 var url = "http://django:8000/api/v1/docker/images/create/"
 
 func CreateTask(image *Image, token string) []byte {
-  client := &http.Client{}
-  payloadBuffer := new(bytes.Buffer)
-  json.NewEncoder(payloadBuffer).Encode(image)
-  req, err := http.NewRequest("POST", url, payloadBuffer)
-  if err != nil {
-    log.Fatal(err)
-  }
-  req.Header.Add("Authorization", token)
-  resp, err := client.Do(req)
-  if err != nil {
-    log.Fatal(err)
-  }
-  bodyBytes, err := io.ReadAll(resp.Body)
-  if err != nil {
-    log.Fatal(err)
-  }
-  return bodyBytes
+	client := &http.Client{}
+	payloadBuffer := new(bytes.Buffer)
+	json.NewEncoder(payloadBuffer).Encode(image)
+	req, err := http.NewRequest("POST", url, payloadBuffer)
+	if err != nil {
+		log.Fatal(err)
+	}
+	req.Header.Add("Authorization", token)
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatal(err)
+	}
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return bodyBytes
 }
 
+func buildImage(client *client.Client, imageName string, fileContext io.Reader, wsClient *Client) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*120)
+	defer cancel()
+
+	imageOptions := types.ImageBuildOptions{
+		Dockerfile: "Dockerfile",
+		Tags:       []string{dockerRegistryID + "/" + imageName},
+		Remove:     true,
+	}
+
+	res, err := client.ImageBuild(ctx, fileContext, imageOptions)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	err = send(res.Body, wsClient)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func send(rd io.Reader, client *Client) error {
+	var lastLine string
+
+	scanner := bufio.NewScanner(rd)
+	for scanner.Scan() {
+		lastLine = scanner.Text()
+		client.Send([]byte(scanner.Text()))
+	}
+
+	errLine := &ErrorLine{}
+	json.Unmarshal([]byte(lastLine), errLine)
+	if errLine.Error != "" {
+		return errors.New(errLine.Error)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
+	return nil
+}
 
 func handleCreateImage(client *Client, image *Image, m *Message) {
-  resp := CreateTask(image, m.Token)
-  client.Send(resp)
-  path := git.CloneRepo(image.Repository, image.ImageName)
-  ctx := git.GetContext(path)
-  log.Println(ctx)
+	dockerClient := docker.GetDockerClient()
+	auth := docker.LoadCredentials()
+	resp := CreateTask(image, m.Token)
+	client.Send(resp)
+	path := git.CloneRepo(image.Repository, image.ImageName)
+	fileContext := git.GetContext(path)
+	err := buildImage(dockerClient, image.ImageName, fileContext, client)
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = pushImage(dockerClient, auth, image.ImageName, client)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func (ps *PubSub) HandleReceiveMessage(client Client, messageType int, payload []byte, gPubSubConn *redis.PubSubConn) *PubSub {
@@ -191,19 +257,37 @@ func (ps *PubSub) HandleReceiveMessage(client Client, messageType int, payload [
 		ps.Subscribe(&client, m.Topic, gPubSubConn, m.Token)
 	case UNSUBSCRIBE:
 		fmt.Println("Client want to unsubscribe the topic", m.Topic, client.Id)
-    case CREATE_IMAGE:
-      var image Image
-      err = json.Unmarshal(m.Data, &image)
-	  fmt.Println("Client wants to create new docker image", m.Topic, client.Id, image)
-      if err != nil {
-        panic(err)
-      }
-
-      // TODO Handle creating and pushing images
-      handleCreateImage(&client, &image, &m)
+	case CREATE_IMAGE:
+		var image Image
+		err = json.Unmarshal(m.Data, &image)
+		fmt.Println("Client wants to create new docker image", m.Topic, client.Id)
+		if err != nil {
+			log.Fatal(err)
+		}
+		handleCreateImage(&client, &image, &m)
 	default:
 		break
 	}
 
 	return ps
+}
+
+func pushImage(client *client.Client, authConfigEncoded string, imageName string, wsClient *Client) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*120)
+	defer cancel()
+	// Perhaps add random has at the end
+	tag := dockerRegistryID + "/" + imageName
+	pushOptions := types.ImagePushOptions{
+		RegistryAuth: authConfigEncoded,
+	}
+	res, err := client.ImagePush(ctx, tag, pushOptions)
+	defer res.Close()
+	err = send(res, wsClient)
+	if err != nil {
+		return err
+	}
+	if err != nil {
+		return nil
+	}
+	return nil
 }

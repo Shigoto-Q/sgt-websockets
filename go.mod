@@ -8,6 +8,7 @@ require (
 	github.com/go-git/go-git/v5 v5.4.2
 	github.com/gomodule/redigo v1.8.8
 	github.com/gorilla/websocket v1.5.0
+	github.com/joho/godotenv v1.4.0
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/satori/go.uuid v1.2.0
 )
