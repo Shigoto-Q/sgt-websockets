@@ -12,6 +12,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -40,8 +41,8 @@ type Client struct {
 	Connection *websocket.Conn
 }
 
-type TestMessage struct {
-	Name string `json:"name"`
+type EndMessage struct {
+	Status string `json:"status"`
 }
 
 type Message struct {
@@ -237,10 +238,22 @@ func handleCreateImage(client *Client, image *Image, m *Message) {
 	if err != nil {
 		log.Fatal(err)
 	}
+	err = os.RemoveAll(path)
+	if err != nil {
+		log.Fatal(err)
+	}
 	err = pushImage(dockerClient, auth, image.ImageName, client)
 	if err != nil {
 		log.Fatal(err)
 	}
+	endMsg := EndMessage{
+		Status: "This is the end",
+	}
+	msg, err := json.Marshal(endMsg)
+	if err != nil {
+		log.Fatal(err)
+	}
+	client.Send(msg)
 }
 
 func (ps *PubSub) HandleReceiveMessage(client Client, messageType int, payload []byte, gPubSubConn *redis.PubSubConn) *PubSub {
