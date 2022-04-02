@@ -1,17 +1,12 @@
 package types
 
 type TaskResult struct {
-	Task_id      string `json:"task_id"`
-	Task_name    string `json:"task_ame"`
-	Task_kwargs  string `json:"task_kwargs"`
-	Status       string `json:"status"`
-	Result       string `json:"result"`
-	Traceback    string `json:"traceback"`
-	Exception    string `json:"exception"`
-	Date_done    string `json:"date_done"`
-	Date_created string `json:"date_created"`
-	User         string `json:"user"`
-	User_id      int    `json:"user_id"`
+	TaskId     string `json:"taskId"`
+	TaskName   string `json:"taskName"`
+	Status     int    `json:"status"`
+	User       string `json:"user"`
+	UserId     int    `json:"userId"`
+	FinishedAt string `json:"finishedAt"`
 }
 
 type TaskCountMessage struct {
@@ -26,9 +21,8 @@ const (
 	TaskResults string = "task_results"
 )
 
-
 type DockerImage struct {
-  Repository string `json:"Repository"`
-  Name string `json:"Name"`
-  ImageName string `json:"ImageName"`
+	Repository string `json:"Repository"`
+	Name       string `json:"Name"`
+	ImageName  string `json:"ImageName"`
 }

@@ -1,11 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"strconv"
 	"time"
-	"encoding/json"
 
 	"github.com/Shigoto-Q/sgt-websockets/pubsub"
 	"github.com/Shigoto-Q/sgt-websockets/types"
@@ -85,7 +85,7 @@ func sendTaskResultMessage(data []byte, sub pubsub.Subscription) {
 	if err != nil {
 		log.Panic(err)
 	}
-	if sub.UserId == strconv.FormatInt(int64(taskResult.User_id), 10) {
+	if sub.UserId == strconv.FormatInt(int64(taskResult.UserId), 10) {
 		err = sub.Client.Send([]byte(data))
 		if err != nil {
 			log.Println(err)
@@ -105,7 +105,6 @@ func sendTaskCountMessage(data []byte, sub pubsub.Subscription) {
 		}
 	}
 }
-
 
 func listenToMessages() {
 	for {
