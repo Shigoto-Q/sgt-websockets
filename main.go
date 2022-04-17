@@ -18,6 +18,7 @@ import (
 var redisPool *redis.Pool
 var taskResult types.TaskResult
 var taskCount types.TaskCountMessage
+var stats types.ShigotoStats
 
 var (
 	gPubSubConn *redis.PubSubConn
@@ -93,6 +94,17 @@ func sendTaskResultMessage(data []byte, sub pubsub.Subscription) {
 	}
 }
 
+func sendShigotoStatsMessage(data []byte, sub pubsub.Subscription) {
+	err := json.Unmarshal([]byte(data), &stats)
+	if err != nil {
+		log.Panic(err)
+	}
+	err = sub.Client.Send([]byte(data))
+	if err != nil {
+		log.Println(err)
+	}
+}
+
 func sendTaskCountMessage(data []byte, sub pubsub.Subscription) {
 	err := json.Unmarshal(data, &taskCount)
 	if err != nil {
@@ -117,6 +129,8 @@ func listenToMessages() {
 					go sendTaskResultMessage(v.Data, sub)
 				} else if v.Channel == types.TaskCount {
 					go sendTaskCountMessage(v.Data, sub)
+				} else if v.Channel == types.Stats {
+					go sendShigotoStatsMessage(v.Data, sub)
 				}
 			}
 		case redis.Subscription:

@@ -29,6 +29,7 @@ const (
 	SUBSCRIBE    = "subscribe"
 	UNSUBSCRIBE  = "unsubscribe"
 	CREATE_IMAGE = "create-image"
+	SHIGOTOSTATS = "shigoto-stats"
 )
 
 type PubSub struct {
@@ -115,10 +116,15 @@ func (ps *PubSub) GetSubscriptions(topic string, client *Client) []Subscription 
 
 func (ps *PubSub) Subscribe(client *Client, topic string, gPubSubConn *redis.PubSubConn, token string) *PubSub {
 	clientSubs := ps.GetSubscriptions(topic, client)
+	var userId string
 	if len(clientSubs) > 0 {
 		return ps
 	}
-	userId := utils.GetUser(token)
+	if len([]rune(token)) < 15 {
+		userId = "0"
+	} else {
+		userId = utils.GetUser(token)
+	}
 	newSubscription := Subscription{
 		Topic:  topic,
 		Client: client,
